@@ -172,7 +172,7 @@ class Response(ui.MainUI):
         self.set_button_enabled(False)
         # 清空渲染队列列表
         self.render_queue_listwidget.clear()
-        #self.ae_js.show_render_queue()
+        self.ae_js.show_render_queue()
         try:
             # 获取队列
             self.render_queue_list = self.ae_js.get_render_queue()
