@@ -4,13 +4,11 @@
 """
 参考的 AE_PyJsx 写的 ae 的 python 包装器
 https://github.com/kingofthebongo/AE_PyJsx
-
-AEJSWrapper 需要 AfterFX.exe 作为参数
-execute_js 为运行 js 脚本的方法，将 ae 的 js
 """
 
 import os
 import time
+import re
 import subprocess
 import tempfile
 
@@ -29,11 +27,20 @@ class AEJSWrapper(object):
         # 需要执行的 js 指令列表
         self.commands = ""
 
-    def make_commands(self, execute_commands, ret_val="null"):
+    def make_commands(self, execute_commands, ret_val=None):
         # 拼接要执行的 js 脚本
         # 脚本包含 写入返回值 和 写入报错信息功能
         self.commands = (
                 """
+// 要执行的脚本
+%s
+                """ % str(execute_commands)
+        )
+
+        if ret_val:
+            ret_command = (
+                """
+                
 function writ_ret(ret_val) {
 var dat_file = new File("%s");
 dat_file.open("w");
@@ -41,32 +48,19 @@ dat_file.writeln(String(ret_val));
 dat_file.close();
 }
 
+// 保存返回值
 try {
-
-// 要执行的脚本
-%s
-
-// 写入保存返回值的临时文件
-// 如果需要获取返回值，写入到临时文件
-if (%s) {
-var ret_val = %s; //  告诉脚本哪个需要参数的值需要返回
+var ret_val = %s;
 writ_ret(ret_val);
-}
-// 如果不需要获取返回值，写入“”到临时文件
-// 保证读取临时文件循环能正常中断
-else{
-writ_ret("");
-}
-
 } catch (e) {
 // 将报错写入返回值
 writ_ret(e);
 }
-            """ % (self.ret_file_clean,
-                   execute_commands,
-                   ret_val,
-                   ret_val)
-        )
+                """ % (self.ret_file_clean,
+                       str(ret_val))
+            )
+
+            self.commands += ret_command
 
     def __build_js_file(self):
         """
@@ -93,7 +87,7 @@ writ_ret(e);
         target = [self.aeApp]
         subprocess.Popen(target)
 
-    def execute_js(self, commands, ret_val="null"):
+    def execute_js(self, commands, ret_val=None):
         """
         运行 js 脚本
         :param ret_val:
@@ -111,13 +105,8 @@ writ_ret(e);
         ret = subprocess.Popen(target)
 
         # 读取返回值
-        ret_str = self.read_ret()
-        # 如果设置了返回值，并且有返回结果返回
-        if ret_val and ret_str:
-            return ret_str
-        # 如果不设置返回值并产生了返回结果，应为报错信息，打印之
-        if ret_str:
-            print(ret_str)
+        if ret_val:
+            return self.read_ret()
 
     def read_ret(self):
         """
@@ -149,6 +138,28 @@ class AEJSInterface(AEJSWrapper):
     def __init__(self, afterfx):
         super(AEJSInterface, self).__init__(afterfx=afterfx)
 
+    def activate_render_item(self, queue_index):
+        command = (
+            """
+var render_queue_items = app.project.renderQueue.items;
+for(var i=1; i <=render_queue_items.length; i++ ){
+    try{
+    app.project.renderQueue.item(i).render = false;
+    } catch(e){
+    }
+}
+
+var activate_status = "true";
+try{
+app.project.renderQueue.item(%s).render = true;
+} catch(e){
+var activate_status = "false";
+}
+            """
+        ) % queue_index
+        activate_status = self.execute_js(command, ret_val="activate_status")
+        return activate_status
+
     def get_render_queue(self):
         # 队列中的渲染列表名
         command = (
@@ -161,11 +172,85 @@ for(var i=1; i <=render_queue_items.length; i++ ){
             """
         )
 
-        render_queue_comp = self.execute_js(command)
+        render_queue_comp = self.execute_js(command, ret_val="render_queue_comp")
         if render_queue_comp:
             return render_queue_comp.split(",")
         else:
             return []
+
+    def get_render_queue_and_status(self):
+        # 队列中的渲染列表名
+        command = (
+            """
+var render_queue_items = app.project.renderQueue.items;
+var render_queue_comp = [];
+for(var i=1; i <=render_queue_items.length; i++ ){
+    var comp_name = app.project.renderQueue.item(i).comp.name;
+    render_queue_comp.push(comp_name);
+    var render_item_status = app.project.renderQueue.item(i).status;
+    render_queue_comp.push(render_item_status);}
+            """
+        )
+
+        render_queue_comp = self.execute_js(command, ret_val="render_queue_comp")
+
+        if render_queue_comp:
+            return render_queue_comp.split(",")
+        else:
+            return []
+
+
+        # rende_comp_and_status = {}
+        # if render_queue_comp:
+        #     rende_comp_list = render_queue_comp.split(",")
+        #     for i, item in enumerate(rende_comp_list):
+        #         if (i % 2) == 0:
+        #             rende_comp_and_status["(%s)%s"%(str(i), item)] = rende_comp_list[i+1]
+        #
+        # return rende_comp_and_status
+
+    def get_render_item_status(self, queue_index):
+        # 获取渲染状态
+        command = (
+            """
+status_num = app.project.renderQueue.item(%s).status
+            """
+        ) % queue_index
+
+        return self.execute_js(command, ret_val="status_num")
+
+    def show_render_queue(self):
+        command = (
+            """
+app.project.renderQueue.showWindow(true)
+            """
+        )
+        self.execute_js(command)
+
+    def render(self, queue_index):
+        command = (
+            """
+var render_queue_items = app.project.renderQueue.items;
+for(var i=1; i <=render_queue_items.length; i++ ){
+    try{
+    app.project.renderQueue.item(i).render = false;
+    } catch(e){
+    }
+}
+
+var activate_status = true;
+try{
+app.project.renderQueue.item(%s).render = true;
+} catch(e){
+var activate_status = false;
+}
+
+if (activate_status){
+app.project.renderQueue.render()
+}
+            """
+        ) % queue_index
+        self.execute_js(command)
 
     def get_file_path(self):
         # 获取当前工程的完整路径
@@ -174,7 +259,7 @@ for(var i=1; i <=render_queue_items.length; i++ ){
 file_path = app.project.file
             """
         )
-        file_path = self.execute_js(command)
+        file_path = self.execute_js(command, ret_val="file_path")
         try:
             file_path = file_path.replace("\\", "/").split("/", 1)[1].replace("/", ":/", 1)
             return file_path
@@ -188,29 +273,61 @@ file_path = app.project.file
 active_item = app.project.activeItem
             """
         )
-        file_path = self.execute_js(command)
+        file_path = self.execute_js(command, ret_val="active_item")
         try:
             file_path = file_path.replace("\\", "/").split("/", 1)[1].replace("/", ":/", 1)
             return file_path
         except:
             return
 
-    def output_module_setting(self, queue_index):
-        pass
+    def get_setting_format(self, queue_index):
+        """
+        :param queue_index: 渲染列表索引值
+        :return:
+        """
+        command = (
+                """
+var omItem_str = app.project.renderQueue.item({queue_ui_index}).outputModule(1).getSettings(GetSettingsFormat.STRING).Format;
+                """
+            ).format(queue_ui_index=queue_index)
+        return self.execute_js(command, ret_val="omItem_str")
+
+    def get_output_file_name(self, queue_index):
+        """
+        :param queue_index: 渲染列表索引值
+        :return:
+        """
+        command = (
+            """
+var omItem_str = app.project.renderQueue.item({queue_ui_index}).outputModule(1).getSettings(GetSettingsFormat.STRING)["Output File Info"]["File Name"];
+            """
+        ).format(queue_ui_index=queue_index)
+        return self.execute_js(command, ret_val="omItem_str")
+
+    def get_output_info(self, queue_index):
+        command = (
+            """
+var output_info = []
+var format = app.project.renderQueue.item({queue_ui_index}).outputModule(1).getSettings(GetSettingsFormat.STRING).Format
+output_info.push(format)
+var full_flat_path = app.project.renderQueue.item({queue_ui_index}).outputModule(1).getSettings(GetSettingsFormat.STRING)["Output File Info"]["Full Flat Path"]
+output_info.push(full_flat_path)
+            """
+        ).format(queue_ui_index=queue_index)
+        output_info = self.execute_js(command, ret_val="output_info")
+        if output_info:
+            return output_info.split(",")
 
     def set_render_output(self, queue_index, output_path):
-        # AE js 渲染列表索引值从 1 开始
-        queue_index += 1
         # 将路径格式化成 AE 可以接受的路径类型
         #
         output_path = "/" + output_path.replace("\\", "/").replace(":", "").lower()
         command = (
             """
-aa = app.project.renderQueue.item({item_index}).outputModule(1).file = new File('{output_path}')
+app.project.renderQueue.item({item_index}).outputModule(1).file = new File('{output_path}')
             """
         ).format(item_index=queue_index,
                  output_path=output_path)
-        print(command)
 
         return self.execute_js(command)
 
