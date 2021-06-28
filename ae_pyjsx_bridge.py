@@ -38,7 +38,7 @@ class AEJSWrapper(object):
         )
 
         if ret_val:
-            ret_command = (
+            self.commands += (
                 """
                 
 function writ_ret(ret_val) {
@@ -60,7 +60,6 @@ writ_ret(e);
                        str(ret_val))
             )
 
-            self.commands += ret_command
 
     def __build_js_file(self):
         """
@@ -90,8 +89,8 @@ writ_ret(e);
     def execute_js(self, commands, ret_val=None):
         """
         运行 js 脚本
-        :param ret_val:
-        :param commands:
+        :param ret_val: 需要返回的参数
+        :param commands: 执行的 js 脚本
         :return:
         """
         # 生成要执行的 js 脚本
@@ -230,6 +229,7 @@ app.project.renderQueue.showWindow(true)
     def render(self, queue_index):
         command = (
             """
+// 尝试将所有渲染项目移除渲染队列
 var render_queue_items = app.project.renderQueue.items;
 for(var i=1; i <=render_queue_items.length; i++ ){
     try{
@@ -238,6 +238,7 @@ for(var i=1; i <=render_queue_items.length; i++ ){
     }
 }
 
+// 将当前项添加到渲染队列
 var activate_status = true;
 try{
 app.project.renderQueue.item(%s).render = true;
@@ -245,6 +246,7 @@ app.project.renderQueue.item(%s).render = true;
 var activate_status = false;
 }
 
+// 如果添加成功，就开始渲染
 if (activate_status){
 app.project.renderQueue.render()
 }
@@ -324,12 +326,11 @@ output_info.push(full_flat_path)
         output_path = "/" + output_path.replace("\\", "/").replace(":", "").lower()
         command = (
             """
-app.project.renderQueue.item({item_index}).outputModule(1).file = new File('{output_path}')
+var process = app.project.renderQueue.item({item_index}).outputModule(1).file = new File('{output_path}')
             """
         ).format(item_index=queue_index,
                  output_path=output_path)
-
-        return self.execute_js(command)
+        self.execute_js(command, ret_val="process")
 
 
 if __name__ == "__main__":
